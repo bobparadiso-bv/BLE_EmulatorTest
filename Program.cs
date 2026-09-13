@@ -15,18 +15,14 @@ class Program
     private static VirtualKeyboard? m_virtualKeyboard;
     private static VirtualConsumer? m_virtualConsumer;
     private static VirtualMouse? m_virtualMouse;
-    private static string VER = "9.0";
+    private static string VER = "9.1";
     private static BlockingCollection<string> m_cmds = new BlockingCollection<string>();
     private static IReadOnlyList<Windows.Devices.Bluetooth.GenericAttributeProfile.GattSubscribedClient>? m_subscribedClients;
     private static unsafe delegate* unmanaged<sbyte*, void> m_sendStringCallback;
+    private static unsafe delegate* unmanaged<sbyte*, void> m_sendLogCallback;
 
-    public static void Log(string message)
-    {
-        Console.WriteLine($"EMULATOR> {message}");
-    }
-
-    public static void LogInfo(string message) { Log(message); }
-    public static void LogDebug(string message) { /*Log(message);*/ }
+    public static void LogInfo(string message) { SendLog(message); }
+    public static void LogDebug(string message) { /*SendLog(message);*/ }
 
 
     private static async Task<bool> InitializeVirtualDevices()
@@ -136,7 +132,24 @@ class Program
                 Marshal.FreeHGlobal(hGlobal);
             }
         }
-        LogDebug($"Wrote: \"{str}\"");
+    }
+
+    private static unsafe void SendLog(string str)
+    {
+        if (m_sendLogCallback is not null)
+        {
+            byte[] utf8Bytes = Encoding.UTF8.GetBytes(str + "\0");
+            IntPtr hGlobal = Marshal.AllocHGlobal(utf8Bytes.Length);
+            Marshal.Copy(utf8Bytes, 0, hGlobal, utf8Bytes.Length);
+            try
+            {
+                m_sendLogCallback((sbyte*)hGlobal);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(hGlobal);
+            }
+        }
     }
 
     private static async Task run_server()
@@ -215,7 +228,7 @@ class Program
                 reportValue[0] = (byte)(val & 0xFF);
                 reportValue[1] = (byte)(val >> 8);
 
-                LogInfo($"ConsumerReport: {reportValue[0]:X},{reportValue[1]:X}");
+                LogDebug($"ConsumerReport: {reportValue[0]:X},{reportValue[1]:X}");
 
                 await m_virtualConsumer.DirectSendReport(reportValue);
                 SendString("OK\n");
@@ -251,9 +264,11 @@ class Program
     }
 
     [UnmanagedCallersOnly(EntryPoint = "Start")]
-    public static unsafe void Start(delegate* unmanaged<sbyte*, void> sendStringCallback)
+    public static unsafe void Start(delegate* unmanaged<sbyte*, void> sendLogCallback, delegate* unmanaged<sbyte*, void> sendStringCallback)
     {
+        m_sendLogCallback = sendLogCallback;
         m_sendStringCallback = sendStringCallback;
+
         SendString("VER=" + VER + "\n");
         SendString("DEVICE=NONE\n");
         run_server().GetAwaiter().GetResult();
